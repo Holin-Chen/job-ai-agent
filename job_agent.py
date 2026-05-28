@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Job AI Agent — Scorer + Cover Letter Drafter
-─────────────────────────────────────────────
+Job AI Agent — Scorer + Cover Letter Drafter + Resume Tailor
+─────────────────────────────────────────────────────────────
 Usage:
     python job_agent.py
 
@@ -11,10 +11,22 @@ Requires a .env file (or exported env var) with:
 
 import os
 import sys
-from dotenv import load_dotenv
 import anthropic
 
-load_dotenv()
+def _load_env_file() -> None:
+    """Read a .env file next to this script without requiring python-dotenv."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ[key.strip()] = value.strip()
+
+_load_env_file()
 
 MODEL = "claude-opus-4-7"
 
@@ -202,6 +214,109 @@ Requirements:
     _print_cache_stats(stream.get_final_message().usage)
 
 
+# ── Resume Tailor ────────────────────────────────────────────────────────────
+
+def tailor_resume(client: anthropic.Anthropic, job_description: str) -> None:
+    """
+    Reads Resume.tex, rewrites the highest-impact bullets for the JD,
+    shows a clean diff (ORIGINAL → REWRITTEN), then saves Resume_tailored.tex.
+    Uses adaptive thinking to reason about which changes matter most.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    tex_path = os.path.join(script_dir, "Resume.tex")
+
+    if not os.path.exists(tex_path):
+        print("\nError: Resume.tex not found next to job_agent.py.")
+        return
+
+    with open(tex_path, encoding="utf-8") as f:
+        resume_tex = f.read()
+
+    print("\n📝  Tailoring resume to this job (may take 30–50 s)…\n")
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=4096,
+        thinking={"type": "adaptive"},
+        system=[
+            {
+                "type": "text",
+                "text": (
+                    "You are an expert resume writer and ATS optimization specialist. "
+                    "You rewrite resume bullets to match job descriptions precisely — "
+                    "mirroring the JD's exact keywords, verbs, and framing — while "
+                    "keeping every claim 100% truthful and grounded in real experience. "
+                    "Never fabricate achievements. Only reframe and emphasize what exists."
+                ),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Tailor this resume to the job description below.
+
+JOB DESCRIPTION:
+{job_description}
+
+CURRENT RESUME (LaTeX source):
+{resume_tex}
+
+Instructions:
+1. Identify the 4–6 highest-impact changes: bullet rewrites, keyword insertions,
+   Professional Summary edits, or reordering. Prioritize ATS keyword matching.
+2. For each change show clearly:
+   ORIGINAL: <exact current text>
+   REWRITTEN: <new text>
+   WHY: one sentence explaining the improvement
+3. After the changes, output the COMPLETE updated LaTeX source with all changes
+   applied — do not truncate or summarize it.
+
+Format your response exactly as:
+
+## Changes ({{}})
+
+### 1. [Section name] — [one-line reason]
+ORIGINAL: ...
+REWRITTEN: ...
+WHY: ...
+
+(repeat for each change)
+
+## Updated Resume.tex
+```latex
+[complete updated LaTeX source]
+```""",
+            }
+        ],
+    )
+
+    full_text = ""
+    for block in response.content:
+        if block.type == "text":
+            full_text = block.text
+
+    # Print everything above the LaTeX fence so the terminal isn't flooded
+    if "```latex" in full_text:
+        summary = full_text[: full_text.index("```latex")]
+        print(summary)
+
+        # Extract and save the tailored LaTeX
+        latex_start = full_text.index("```latex") + len("```latex")
+        latex_end   = full_text.index("```", latex_start)
+        updated_tex = full_text[latex_start:latex_end].strip()
+
+        out_path = os.path.join(script_dir, "Resume_tailored.tex")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(updated_tex)
+        print(f"✅  Saved → Resume_tailored.tex  ({len(updated_tex):,} chars)")
+    else:
+        # Fallback: print everything if no LaTeX fence found
+        print(full_text)
+
+    _print_cache_stats(response.usage)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _print_cache_stats(usage) -> None:
@@ -227,7 +342,7 @@ def get_job_description() -> str:
 
 
 def get_client() -> anthropic.Anthropic:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         print(
             "Error: ANTHROPIC_API_KEY is not set.\n"
@@ -244,14 +359,15 @@ def main() -> None:
     client = get_client()
 
     print("=" * 60)
-    print("   JOB AI AGENT  —  Scorer + Cover Letter Drafter")
+    print("   JOB AI AGENT  —  Scorer · Drafter · Resume Tailor")
     print("=" * 60)
 
     while True:
         print("\nWhat would you like to do?")
         print("  1  Score a job (fit score + gap analysis)")
         print("  2  Draft a cover letter")
-        print("  3  Score AND draft")
+        print("  3  Tailor my resume to this job")
+        print("  4  Score + draft + tailor  (do everything)")
         print("  q  Quit")
 
         choice = input("\nChoice: ").strip().lower()
@@ -259,17 +375,19 @@ def main() -> None:
         if choice == "q":
             print("Good luck out there!")
             break
-        elif choice in ("1", "2", "3"):
+        elif choice in ("1", "2", "3", "4"):
             jd = get_job_description()
             if not jd:
                 print("Nothing entered — try again.")
                 continue
-            if choice in ("1", "3"):
+            if choice in ("1", "4"):
                 score_job(client, jd)
-            if choice in ("2", "3"):
+            if choice in ("2", "4"):
                 draft_cover_letter(client, jd)
+            if choice in ("3", "4"):
+                tailor_resume(client, jd)
         else:
-            print("Invalid choice — enter 1, 2, 3, or q.")
+            print("Invalid choice — enter 1, 2, 3, 4, or q.")
 
 
 if __name__ == "__main__":
