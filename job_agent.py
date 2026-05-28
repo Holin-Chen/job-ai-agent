@@ -236,7 +236,7 @@ def tailor_resume(client: anthropic.Anthropic, job_description: str) -> None:
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=8000,
         thinking={"type": "adaptive"},
         system=[
             {
@@ -296,22 +296,28 @@ WHY: ...
         if block.type == "text":
             full_text = block.text
 
-    # Print everything above the LaTeX fence so the terminal isn't flooded
+    # Print the changes summary; extract and save the LaTeX block
     if "```latex" in full_text:
-        summary = full_text[: full_text.index("```latex")]
+        latex_open  = full_text.index("```latex")
+        summary     = full_text[:latex_open]
         print(summary)
 
-        # Extract and save the tailored LaTeX
-        latex_start = full_text.index("```latex") + len("```latex")
-        latex_end   = full_text.index("```", latex_start)
-        updated_tex = full_text[latex_start:latex_end].strip()
+        latex_start = latex_open + len("```latex")
+        # Closing fence is optional — use end-of-string if missing (truncated response)
+        try:
+            latex_end = full_text.index("```", latex_start)
+            updated_tex = full_text[latex_start:latex_end].strip()
+        except ValueError:
+            updated_tex = full_text[latex_start:].strip()
+            print("\n⚠️  Response was cut off — LaTeX may be incomplete. "
+                  "Try running tailor again if the file looks truncated.\n")
 
         out_path = os.path.join(script_dir, "Resume_tailored.tex")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(updated_tex)
         print(f"✅  Saved → Resume_tailored.tex  ({len(updated_tex):,} chars)")
     else:
-        # Fallback: print everything if no LaTeX fence found
+        # No LaTeX fence at all — print everything
         print(full_text)
 
     _print_cache_stats(response.usage)
