@@ -602,6 +602,42 @@ def _fmt_salary(job: dict) -> str:
     return "not listed"
 
 
+def _expand_keywords(client: anthropic.Anthropic, user_input: str) -> list[str]:
+    """
+    Use Claude (with resume context) to turn the user's job title into
+    4-5 broader Adzuna search queries covering the same field.
+    """
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=150,
+        system=_base_system(
+            "You help generate job search keyword variations based on a candidate's background. "
+            "Be specific to the candidate's domain — healthcare, pharma, epidemiology, RWE."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                f'The user wants to find jobs related to: "{user_input}"\n\n'
+                "Generate 4-5 Adzuna search queries that cover this role AND closely related "
+                "positions that match the candidate's background. Each query: 1-4 words.\n"
+                "Return ONLY a JSON array of strings, no explanation.\n"
+                'Example for "RWE analyst": '
+                '["real world evidence", "outcomes researcher", "pharmacoepidemiology", '
+                '"health data scientist", "biostatistician pharma"]'
+            ),
+        }],
+    )
+
+    text = next((b.text.strip() for b in response.content if b.type == "text"), "[]")
+    if "```" in text:
+        text = text.split("```")[1].lstrip("json").strip()
+    try:
+        terms = [t for t in json.loads(text) if isinstance(t, str)]
+        return terms[:5] if terms else [user_input]
+    except Exception:
+        return [user_input]
+
+
 def search_jobs(client: anthropic.Anthropic) -> None:
     """Prompt for search terms, fetch jobs, batch-score, display ranked matches."""
     print("\n-- Job Search --")
@@ -622,29 +658,43 @@ def search_jobs(client: anthropic.Anthropic) -> None:
     min_str = input("Minimum fit score to show [default: 60]: ").strip()
     min_score = int(min_str) if min_str.isdigit() else 60
 
-    # Try Adzuna first; fall back to Remotive if keys are missing/invalid
-    jobs = []
-    source = ""
-    try:
-        print(f"\nSearching Adzuna for '{keywords}'"
-              + (f" in '{location}'" if location else "") + "...")
-        jobs = _fetch_adzuna_jobs(keywords, location, count=25)
-        source = "Adzuna"
-    except RuntimeError as e:
-        if "adzuna_not_configured" in str(e):
-            print("Adzuna keys not set -- falling back to Remotive (remote jobs only).")
-            print("Add ADZUNA_APP_ID + ADZUNA_API_KEY to .env for broader search.")
-        else:
-            print(f"Adzuna error: {e} -- falling back to Remotive.")
+    # Expand the user's keywords into related search terms using Claude + resume context
+    print("\nExpanding search terms...")
+    search_terms = _expand_keywords(client, keywords)
+    print(f"Searching for: {', '.join(search_terms)}\n")
+
+    # Fetch from Adzuna across all expanded terms, deduplicate by URL
+    jobs_by_key: dict = {}
+    source = "Adzuna"
+    adzuna_ok = False
+
+    for term in search_terms:
+        try:
+            term_jobs = _fetch_adzuna_jobs(term, location, count=10)
+            adzuna_ok = True
+            for j in term_jobs:
+                key = j["url"] or f"{j['title']}|{j['company']}"
+                jobs_by_key[key] = j
+        except RuntimeError as e:
+            if "adzuna_not_configured" in str(e):
+                break   # no point retrying other terms
+            # network/API error for this term — skip and continue
+
+    jobs = list(jobs_by_key.values())
+
+    # Fall back to Remotive if Adzuna is not configured or returned nothing
+    if not jobs and not adzuna_ok:
+        print("Adzuna keys not set -- falling back to Remotive (remote jobs only).")
+        print("Add ADZUNA_APP_ID + ADZUNA_API_KEY to .env for broader search.\n")
         try:
             jobs = _fetch_remotive_jobs(keywords, count=25)
             source = "Remotive"
-        except RuntimeError as e2:
-            print(f"\nERROR: {e2}")
+        except RuntimeError as e:
+            print(f"\nERROR: {e}")
             return
 
     if not jobs:
-        print("No listings found. Try different keywords.")
+        print("No listings found. Try different keywords or broaden the location.")
         return
 
     print(f"Found {len(jobs)} listings from {source}. Scoring against your resume...")
