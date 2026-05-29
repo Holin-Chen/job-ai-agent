@@ -11,6 +11,9 @@ Requires a .env file (or exported env var) with:
 
 import os
 import sys
+import urllib.request
+import urllib.error
+from html.parser import HTMLParser
 import anthropic
 
 def _load_env_file() -> None:
@@ -124,7 +127,7 @@ def score_job(client: anthropic.Anthropic, job_description: str) -> None:
     Uses adaptive thinking so the model can reason deeply before it scores.
     Thinking blocks are hidden from output (Opus 4.7 omits them by default).
     """
-    print("\n⏳  Analyzing fit (may take 20–40 s with adaptive thinking)…\n")
+    print("\nAnalyzing fit (may take 20-40 s with adaptive thinking)...\n")
 
     response = client.messages.create(
         model=MODEL,
@@ -177,7 +180,7 @@ def draft_cover_letter(client: anthropic.Anthropic, job_description: str) -> Non
     Streams the cover letter so you see it appear word-by-word.
     No thinking block needed here — cover letter writing is generative, not analytical.
     """
-    print("\n✍️  Drafting cover letter…\n")
+    print("\nDrafting cover letter...\n")
     print("─" * 60)
 
     with client.messages.stream(
@@ -232,7 +235,7 @@ def tailor_resume(client: anthropic.Anthropic, job_description: str) -> None:
     with open(tex_path, encoding="utf-8") as f:
         resume_tex = f.read()
 
-    print("\n📝  Tailoring resume to this job (may take 30–50 s)…\n")
+    print("\nTailoring resume to this job (may take 30-50 s)...\n")
 
     response = client.messages.create(
         model=MODEL,
@@ -309,18 +312,132 @@ WHY: ...
             updated_tex = full_text[latex_start:latex_end].strip()
         except ValueError:
             updated_tex = full_text[latex_start:].strip()
-            print("\n⚠️  Response was cut off — LaTeX may be incomplete. "
+            print("\nWARNING: Response was cut off - LaTeX may be incomplete. "
                   "Try running tailor again if the file looks truncated.\n")
 
         out_path = os.path.join(script_dir, "Resume_tailored.tex")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(updated_tex)
-        print(f"✅  Saved → Resume_tailored.tex  ({len(updated_tex):,} chars)")
+        print(f"Saved -> Resume_tailored.tex  ({len(updated_tex):,} chars)")
     else:
         # No LaTeX fence at all — print everything
         print(full_text)
 
     _print_cache_stats(response.usage)
+
+
+# ── URL Fetcher ───────────────────────────────────────────────────────────────
+
+class _TextExtractor(HTMLParser):
+    """Walks HTML and collects visible text, skipping scripts/styles."""
+    SKIP = {"script", "style", "head", "noscript", "meta", "link"}
+
+    def __init__(self):
+        super().__init__()
+        self._depth = 0          # nesting depth inside a skip-tag
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self._depth += 1
+        if tag in ("p", "div", "li", "br", "h1", "h2", "h3", "h4", "tr"):
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP:
+            self._depth = max(0, self._depth - 1)
+
+    def handle_data(self, data):
+        if self._depth == 0:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        raw = "".join(self._parts)
+        # Collapse whitespace while keeping paragraph breaks
+        lines = [" ".join(ln.split()) for ln in raw.splitlines()]
+        lines = [ln for ln in lines if ln]            # drop blank lines
+        return "\n".join(lines)
+
+
+def _fetch_raw(url: str, timeout: int = 15) -> str:
+    """
+    Fetch a URL and return raw HTML/text. Raises RuntimeError on HTTP/network failure.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            charset = resp.headers.get_content_charset() or "utf-8"
+            return resp.read().decode(charset, errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code}: {e.reason}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Network error: {e.reason}")
+
+
+def fetch_url(url: str) -> str:
+    """
+    Download a job-posting URL and return cleaned plain text.
+
+    Strategy:
+      1. Try fetching the URL directly and parse the HTML.
+      2. If the page looks JS-rendered (too little text), fall back to
+         Jina AI's free reader API (r.jina.ai) which handles JS pages.
+
+    Uses only stdlib — no extra packages required.
+    Raises RuntimeError with a human-readable message on failure.
+    """
+    print(f"\nFetching {url} ...")
+
+    # ── Attempt 1: direct fetch ───────────────────────────────────────────────
+    try:
+        html = _fetch_raw(url)
+        extractor = _TextExtractor()
+        extractor.feed(html)
+        text = extractor.text()
+    except RuntimeError as e:
+        text = ""
+        print(f"  Direct fetch failed ({e}), trying reader API...")
+
+    # ── Attempt 2: Jina reader API (handles JS-rendered pages) ───────────────
+    if len(text) < 300:
+        if len(text) > 0:
+            print("  Page looks JS-rendered, trying reader API...")
+        jina_url = f"https://r.jina.ai/{url}"
+        try:
+            text = _fetch_raw(jina_url, timeout=30)
+            # Jina returns markdown — strip any leading metadata lines
+            lines = text.splitlines()
+            # Drop lines before the first non-empty content line
+            text = "\n".join(ln for ln in lines if ln.strip())
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Could not fetch page via direct or reader API: {e}\n"
+                "  -> Paste the job description text manually instead."
+            )
+
+    if len(text) < 300:
+        raise RuntimeError(
+            "Could not extract enough text from the page.\n"
+            "  -> Open the page, copy the job description text, and paste it manually."
+        )
+
+    # Cap at ~12 000 chars to keep prompts reasonable
+    if len(text) > 12_000:
+        text = text[:12_000] + "\n[... page truncated ...]"
+
+    print(f"OK  Got {len(text):,} chars.\n")
+    return text
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -333,9 +450,23 @@ def _print_cache_stats(usage) -> None:
 
 
 def get_job_description() -> str:
-    print("\nPaste the job description below.")
-    print("Type END on its own line when finished:\n")
-    lines = []
+    print("\nPaste a job URL  —or—  paste the description text (type END to finish):\n")
+    try:
+        first = input().strip()
+    except EOFError:
+        return ""
+
+    # ── URL mode ──────────────────────────────────────────────────────────────
+    if first.lower().startswith(("http://", "https://")):
+        try:
+            return fetch_url(first)
+        except RuntimeError as e:
+            print(f"\nWARNING: Could not fetch URL: {e}")
+            print("\nFall back: paste the job description text, type END when done:\n")
+            first = ""   # drop the URL, collect text manually below
+
+    # ── Text mode ─────────────────────────────────────────────────────────────
+    lines = [first] if first and first.upper() != "END" else []
     while True:
         try:
             line = input()
