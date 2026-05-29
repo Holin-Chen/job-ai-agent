@@ -451,7 +451,7 @@ def _fetch_adzuna_jobs(keywords: str, location: str, count: int) -> list[dict]:
     app_id  = os.getenv("ADZUNA_APP_ID", "")
     api_key = os.getenv("ADZUNA_API_KEY", "")
 
-    if not app_id or not api_key or "your_" in app_id:
+    if not app_id or not api_key or app_id.startswith("your_"):
         raise RuntimeError("adzuna_not_configured")
 
     params: dict = {
@@ -606,29 +606,26 @@ def search_jobs(client: anthropic.Anthropic) -> None:
     min_str = input("Minimum fit score to show [default: 60]: ").strip()
     min_score = int(min_str) if min_str.isdigit() else 60
 
-    # Auto-select source: Adzuna if configured, Remotive otherwise
-    use_adzuna = (
-        "your_" not in os.getenv("ADZUNA_APP_ID", "your_")
-        and os.getenv("ADZUNA_APP_ID", "")
-        and os.getenv("ADZUNA_API_KEY", "")
-    )
-
-    # Fetch listings from whichever source is available
+    # Try Adzuna first; fall back to Remotive if keys are missing/invalid
+    jobs = []
+    source = ""
     try:
-        if use_adzuna:
-            print(f"\nSearching Adzuna for '{keywords}'"
-                  + (f" in '{location}'" if location else "") + "...")
-            jobs = _fetch_adzuna_jobs(keywords, location, count=25)
-            source = "Adzuna"
+        print(f"\nSearching Adzuna for '{keywords}'"
+              + (f" in '{location}'" if location else "") + "...")
+        jobs = _fetch_adzuna_jobs(keywords, location, count=25)
+        source = "Adzuna"
+    except RuntimeError as e:
+        if "adzuna_not_configured" in str(e):
+            print("Adzuna keys not set -- falling back to Remotive (remote jobs only).")
+            print("Add ADZUNA_APP_ID + ADZUNA_API_KEY to .env for broader search.")
         else:
-            print(f"\nAdzuna not configured — using Remotive (remote jobs only).")
-            print("To enable Adzuna (broader search): add ADZUNA_APP_ID + ADZUNA_API_KEY to .env")
-            print(f"Searching Remotive for '{keywords}'...")
+            print(f"Adzuna error: {e} -- falling back to Remotive.")
+        try:
             jobs = _fetch_remotive_jobs(keywords, count=25)
             source = "Remotive"
-    except RuntimeError as e:
-        print(f"\nERROR: {e}")
-        return
+        except RuntimeError as e2:
+            print(f"\nERROR: {e2}")
+            return
 
     if not jobs:
         print("No listings found. Try different keywords.")
