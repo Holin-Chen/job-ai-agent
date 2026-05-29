@@ -451,14 +451,8 @@ def _fetch_adzuna_jobs(keywords: str, location: str, count: int) -> list[dict]:
     app_id  = os.getenv("ADZUNA_APP_ID", "")
     api_key = os.getenv("ADZUNA_API_KEY", "")
 
-    if not app_id or not api_key:
-        raise RuntimeError(
-            "Adzuna API credentials not set.\n"
-            "  1. Sign up free at: https://developer.adzuna.com/\n"
-            "  2. Add to your .env file:\n"
-            "       ADZUNA_APP_ID=your_app_id\n"
-            "       ADZUNA_API_KEY=your_api_key"
-        )
+    if not app_id or not api_key or "your_" in app_id:
+        raise RuntimeError("adzuna_not_configured")
 
     params: dict = {
         "app_id":            app_id,
@@ -491,6 +485,43 @@ def _fetch_adzuna_jobs(keywords: str, location: str, count: int) -> list[dict]:
             "salary_max":  int(r.get("salary_max") or 0),
             "url":         r.get("redirect_url", ""),
             "description": (r.get("description") or "")[:1500],
+        })
+    return jobs
+
+
+def _fetch_remotive_jobs(keywords: str, count: int) -> list[dict]:
+    """
+    Fallback job source — Remotive free API, no key required.
+    Covers remote roles; maps to the same normalised job dict shape.
+    """
+    # Remotive category that best matches data/analytics/stats keywords
+    category = "data"
+    params = {"category": category, "limit": count, "search": keywords}
+    url = "https://remotive.com/api/remote-jobs?" + urllib.parse.urlencode(params)
+
+    try:
+        raw  = _fetch_raw(url)
+        data = json.loads(raw)
+    except (RuntimeError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Remotive API error: {e}")
+
+    jobs = []
+    for r in data.get("jobs", []):
+        # Strip HTML tags from description
+        extractor = _TextExtractor()
+        extractor.feed(r.get("description", ""))
+        desc = extractor.text()[:1500]
+
+        salary_str = r.get("salary", "") or ""
+        jobs.append({
+            "title":       r.get("title", "Unknown Title"),
+            "company":     r.get("company_name", "Unknown"),
+            "location":    r.get("candidate_required_location", "Remote") or "Remote",
+            "salary_min":  0,
+            "salary_max":  0,
+            "salary_text": salary_str,   # Remotive gives a string, not numbers
+            "url":         r.get("url", ""),
+            "description": desc,
         })
     return jobs
 
@@ -549,6 +580,9 @@ def _batch_score_jobs(client: anthropic.Anthropic, jobs: list[dict]) -> list[dic
 
 
 def _fmt_salary(job: dict) -> str:
+    # Remotive provides a raw string; Adzuna provides numeric min/max
+    if job.get("salary_text"):
+        return job["salary_text"]
     lo, hi = job.get("salary_min", 0), job.get("salary_max", 0)
     if lo and hi:
         return f"${lo:,.0f} - ${hi:,.0f}"
@@ -560,32 +594,47 @@ def _fmt_salary(job: dict) -> str:
 
 
 def search_jobs(client: anthropic.Anthropic) -> None:
-    """Prompt for search terms, fetch from Adzuna, batch-score, display ranked matches."""
+    """Prompt for search terms, fetch jobs, batch-score, display ranked matches."""
     print("\n-- Job Search --")
     keywords = input("Keywords (e.g. 'biostatistician', 'health data scientist'): ").strip()
     if not keywords:
         print("No keywords entered.")
         return
 
-    location = input("Location (e.g. 'San Francisco', 'remote') or Enter to skip: ").strip()
+    location = input("Location (e.g. 'San Francisco') or Enter for remote/all: ").strip()
 
     min_str = input("Minimum fit score to show [default: 60]: ").strip()
     min_score = int(min_str) if min_str.isdigit() else 60
 
-    print(f"\nSearching Adzuna for '{keywords}'"
-          + (f" in '{location}'" if location else "") + "...")
+    # Auto-select source: Adzuna if configured, Remotive otherwise
+    use_adzuna = (
+        "your_" not in os.getenv("ADZUNA_APP_ID", "your_")
+        and os.getenv("ADZUNA_APP_ID", "")
+        and os.getenv("ADZUNA_API_KEY", "")
+    )
 
+    # Fetch listings from whichever source is available
     try:
-        jobs = _fetch_adzuna_jobs(keywords, location, count=25)
+        if use_adzuna:
+            print(f"\nSearching Adzuna for '{keywords}'"
+                  + (f" in '{location}'" if location else "") + "...")
+            jobs = _fetch_adzuna_jobs(keywords, location, count=25)
+            source = "Adzuna"
+        else:
+            print(f"\nAdzuna not configured — using Remotive (remote jobs only).")
+            print("To enable Adzuna (broader search): add ADZUNA_APP_ID + ADZUNA_API_KEY to .env")
+            print(f"Searching Remotive for '{keywords}'...")
+            jobs = _fetch_remotive_jobs(keywords, count=25)
+            source = "Remotive"
     except RuntimeError as e:
         print(f"\nERROR: {e}")
         return
 
     if not jobs:
-        print("No listings found. Try different keywords or broaden location.")
+        print("No listings found. Try different keywords.")
         return
 
-    print(f"Found {len(jobs)} listings. Scoring against your resume...")
+    print(f"Found {len(jobs)} listings from {source}. Scoring against your resume...")
     jobs = _batch_score_jobs(client, jobs)
 
     matches = sorted(
