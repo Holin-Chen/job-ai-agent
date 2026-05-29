@@ -1,0 +1,148 @@
+\documentclass[10pt]{article}
+
+% ---------- Packages ----------
+\usepackage[
+    top=0.55in,
+    bottom=0.55in,
+    left=0.7in,
+    right=0.7in
+]{geometry}
+
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+% ---------- Formatting ----------
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\pagenumbering{gobble}
+
+\definecolor{rBlue}{RGB}{0,0,128}
+
+\raggedright
+
+% tighter list formatting
+\setlist[itemize]{leftmargin=*, topsep=1pt, itemsep=1pt, parsep=1pt, partopsep=0pt}
+
+\begin{document}
+
+% ==================== Header ====================
+
+\noindent
+\begin{minipage}[t]{0.55\textwidth}
+    % \hspace{-0.5pt} \textbf{\textcolor{rBlue}{JOBTITLE \textbar \hspace{0pt} JOBTITLE}}
+    \vspace{5pt}
+    
+    {\Huge \textbf{Holin Yangping Chen}}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.42\textwidth}
+    \raggedleft
+    San Francisco Bay Area, California \\
+    614--270--3776 \\
+    \href{mailto:yangpingchen1996@outlook.com}{yangpingchen1996@outlook.com} \\
+    % \href{https://www.linkedin.com/in/holin-chen}{linkedin.com/in/holin-chen} \\
+    \href{https://holin-chen.github.io/}{holin-chen.github.io}
+    \href{https://scholar.google.com/citations?user=1KJ1nPgAAAAJ&hl=en}
+    {scholar.google.com/yangpingchen}
+\end{minipage}
+
+\vspace{8pt}
+
+% ==================== Qualifications Summary ====================
+% \textbf{\textcolor{rBlue}{Qualifications Summary}}
+% \vspace{0pt}
+% \hrule
+% \vspace{2pt}
+
+% \begin{itemize}
+
+% \item \textbf{Advanced Degree}: Master of Public Health (MPH) with a concentration in Epidemiology.
+% \item \textbf{INSERT}:
+% \item \textbf{INSERT}:
+% \item \textbf{INSERT}:
+
+% \end{itemize}
+
+% ==================== Qualifications Summary ====================
+\textbf{\textcolor{rBlue}{Professional Summary}}
+\hrule
+
+% \begin{itemize}[leftmargin=*]
+
+Senior Real-World Evidence (RWE) and Healthcare Research Analyst with 5 years of experience conducting large-scale observational health research using Medicare, Medicaid, and epidemiologic survey datasets for federal agencies including the FDA and CDC. Deep expertise in pharmacoepidemiology, causal inference, vaccine surveillance, and statistical programming at scale (millions to billions of records) using SAS, R, Python, and SQL. 
+
+Experienced in designing reproducible analytical pipelines, survival analysis, propensity score methodologies, longitudinal modeling, and safety surveillance studies involving millions to billions of healthcare records. Contributed to FDA drug safety evaluations informing regulatory decisions and boxed warning updates. Published researcher with expertise spanning vaccine effectiveness, infectious disease epidemiology, and real-world evidence generation.
+
+\end{itemize}
+
+% ==================== Experience ====================
+\textbf{\textcolor{rBlue}{Professional Experience}}
+\hrule
+\vspace{2pt}
+
+\textbf{\underline{The SPHERE Institute (Acumen, LLC)}} \textbar \vspace{5pt} Burlingame, CA \hfill Jul 2022 -- Present \\
+% \textit{Conducted large-scale real-world healthcare research and statistical programming for FDA and CDC federal public health projects using Medicare and Medicaid claims data to support vaccine surveillance, drug safety monitoring, and regulatory decision-making.}
+
+\textbf{Senior Data and Policy Analyst - Statistical Programmer}
+\vspace{-4pt}
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=2pt]
+  \item Designed and executed large-scale pharmacoepidemiology and RWE studies for FDA and CDC using Medicare FFS, Medicare Advantage, and Medicaid claims data; queried, cleaned, and harmonized multi-billion-row datasets using SAS, SQL, R, and Python across vaccine surveillance, drug safety, and utilization research.
+  \item Built reproducible end-to-end analytical pipelines for vaccine effectiveness and uptake surveillance studies, encompassing automated data ingestion, cohort construction, statistical modeling, and reporting; developed parallelized ML workflows that improved causal inference model runtime by more than 8×.
+  \item Applied retrospective cohort study — propensity score weighting, IPTW, logistic regression, and survival analysis — to evaluate post-market drug safety outcomes from observational claims data; contributed to an FDA evaluation of Prolia (denosumab) that was published in JAMA and led to an FDA-mandated boxed warning update.
+  \item Led the healthcare cost and utilization analysis by comparing branded, biosimilar, and unbranded pharmaceuticals using Medicare reimbursement data; designed data modules and metadata infrastructure for CDC COVID-19 and RSV vaccine surveillance official reports.
+  \item Produced and presented research deliverables, technical documentation, and data visualizations directly to FDA and CDC clients; provided internal training on SAS, Python, and large-scale claims data workflows including code optimization and reproducible research practices.
+\end{itemize}
+
+\textbf{\underline{Rollins School of Public Health, Emory University}} \textbar \vspace{5pt} Atlanta, GA \hfill Jul 2021 -- Jul 2022 \\
+
+% \textit{Managed and analyzed epidemiologic survey, serology, and sensor-based research data using statistical and computational methods to support infectious disease modeling and public health research}
+
+\textbf{Public Health Program Associate – Data Manager} \\
+\vspace{-1pt}
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=2pt]
+  \item Developed automated data cleaning, QC, and reporting pipelines using R, APIs, and GitHub for large-scale epidemiologic survey and sensor-based studies; managed longitudinal diary datasets to quantify social contact patterns and disease transmission parameters.
+  \item Built Bayesian MCMC modeling workflows in R for longitudinal COVID-19 serology analyses across multiple U.S. states, executed on Linux-based HPC clusters; analyzed wearable sensor and household contact network data in Python to evaluate transmission dynamics.
+  \item Generated reproducible weekly stakeholder reports featuring statistical summaries, interactive visualizations, and R Markdown deliverables.
+  \item Trained international field teams in Guatemala and India on sensor deployment and data collection for global social mixing studies.
+\end{itemize}
+
+% ==================== Education ====================
+\textbf{\textcolor{rBlue}{Education}}
+\hrule
+
+\textbf{Master of Public Health} \textbar \vspace{5pt} Epidemiology GPA: 3.91 / 4.0 \hfill 2021 \\ 
+\vspace{-4pt}
+\textit{Emory University, Rollins School of Public Health} \\
+Atlanta,  GA 
+
+
+\textbf{Bachelor of Medicine} \textbar \vspace{5pt} Medical Sciences \hfill 2019 \\
+\vspace{-4pt}
+\textit{Southern Medical University} \\
+Guangzhou, China
+
+
+% % ==================== Certifications ====================
+% \textbf{\textcolor{rBlue}{Certifications}}
+% \vspace{1pt}
+% \hrule
+
+% SAS Certified Specialist: Base Programming \hfill 2021
+
+% % ==================== Technology ====================
+% \textbf{\textcolor{rBlue}{Technology}}
+% \vspace{-0.5pt}
+% \hrule
+% \vspace{2pt}
+
+% \begin{itemize}
+%   \item \textbf{Statistical Software:} SAS, R, Python
+%   \item \textbf{Data Querying:} SQL, Microsoft Access
+%   \item \textbf{Data Reporting \& Visualization:} Excel, Power BI
+%   \item \textbf{Version Control:} Git, GitLab
+%   % \item \textbf{Reference Manager:} EndNote, Mendeley
+%   \item \textbf{Productivity \& AI Tools:} Microsoft Office, Microsoft Copilot
+% \end{itemize}
+
+\end{document}
