@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Job AI Agent — Scorer + Cover Letter Drafter + Resume Tailor
-─────────────────────────────────────────────────────────────
+Job AI Agent — Scorer + Cover Letter Drafter + Resume Tailor + Job Search
+──────────────────────────────────────────────────────────────────────────
 Usage:
     python job_agent.py
 
-Requires a .env file (or exported env var) with:
+Requires a .env file with:
     ANTHROPIC_API_KEY=sk-ant-...
+    ADZUNA_APP_ID=...          # free at developer.adzuna.com
+    ADZUNA_API_KEY=...
 """
 
 import os
 import sys
+import json
 import urllib.request
 import urllib.error
+import urllib.parse
 from html.parser import HTMLParser
 import anthropic
 
@@ -440,6 +444,202 @@ def fetch_url(url: str) -> str:
     return text
 
 
+# ── Job Search ───────────────────────────────────────────────────────────────
+
+def _fetch_adzuna_jobs(keywords: str, location: str, count: int) -> list[dict]:
+    """Call Adzuna API and return a list of normalised job dicts."""
+    app_id  = os.getenv("ADZUNA_APP_ID", "")
+    api_key = os.getenv("ADZUNA_API_KEY", "")
+
+    if not app_id or not api_key:
+        raise RuntimeError(
+            "Adzuna API credentials not set.\n"
+            "  1. Sign up free at: https://developer.adzuna.com/\n"
+            "  2. Add to your .env file:\n"
+            "       ADZUNA_APP_ID=your_app_id\n"
+            "       ADZUNA_API_KEY=your_api_key"
+        )
+
+    params: dict = {
+        "app_id":            app_id,
+        "app_key":           api_key,
+        "results_per_page":  count,
+        "what":              keywords,
+        "content-type":      "application/json",
+    }
+    if location:
+        params["where"] = location
+
+    url = (
+        "https://api.adzuna.com/v1/api/jobs/us/search/1?"
+        + urllib.parse.urlencode(params)
+    )
+
+    try:
+        raw  = _fetch_raw(url)
+        data = json.loads(raw)
+    except (RuntimeError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Adzuna API error: {e}")
+
+    jobs = []
+    for r in data.get("results", []):
+        jobs.append({
+            "title":       r.get("title", "Unknown Title"),
+            "company":     r.get("company",  {}).get("display_name", "Unknown"),
+            "location":    r.get("location", {}).get("display_name", "Unknown"),
+            "salary_min":  int(r.get("salary_min") or 0),
+            "salary_max":  int(r.get("salary_max") or 0),
+            "url":         r.get("redirect_url", ""),
+            "description": (r.get("description") or "")[:1500],
+        })
+    return jobs
+
+
+def _batch_score_jobs(client: anthropic.Anthropic, jobs: list[dict]) -> list[dict]:
+    """
+    Score all jobs against the resume in one Claude call.
+    Returns the same list with a 'score' key added to each item.
+    """
+    blocks = []
+    for i, j in enumerate(jobs, 1):
+        blocks.append(
+            f"Job {i}: {j['title']} at {j['company']} ({j['location']})\n"
+            f"{j['description']}"
+        )
+    jobs_text = "\n\n---\n\n".join(blocks)
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=512,
+        system=_base_system(
+            "You are a recruiter scoring job listings for a candidate. "
+            "Score each 0-100 on how well the candidate qualifies. "
+            "60+ = genuinely qualified. 80+ = strong match. Be strict."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                "Score each job against the resume. "
+                "Return ONLY a JSON array — no explanation, no markdown fences.\n"
+                'Example: [{"i":1,"score":85},{"i":2,"score":42}]\n\n'
+                + jobs_text
+            ),
+        }],
+    )
+
+    raw_text = ""
+    for block in response.content:
+        if block.type == "text":
+            raw_text = block.text.strip()
+
+    # Strip any accidental markdown fences
+    if "```" in raw_text:
+        raw_text = raw_text.split("```")[1].lstrip("json").strip()
+
+    try:
+        score_map = {item["i"]: item["score"] for item in json.loads(raw_text)}
+    except Exception:
+        score_map = {}
+
+    for i, job in enumerate(jobs, 1):
+        job["score"] = score_map.get(i, 0)
+
+    _print_cache_stats(response.usage)
+    return jobs
+
+
+def _fmt_salary(job: dict) -> str:
+    lo, hi = job.get("salary_min", 0), job.get("salary_max", 0)
+    if lo and hi:
+        return f"${lo:,.0f} - ${hi:,.0f}"
+    if lo:
+        return f"${lo:,.0f}+"
+    if hi:
+        return f"up to ${hi:,.0f}"
+    return "not listed"
+
+
+def search_jobs(client: anthropic.Anthropic) -> None:
+    """Prompt for search terms, fetch from Adzuna, batch-score, display ranked matches."""
+    print("\n-- Job Search --")
+    keywords = input("Keywords (e.g. 'biostatistician', 'health data scientist'): ").strip()
+    if not keywords:
+        print("No keywords entered.")
+        return
+
+    location = input("Location (e.g. 'San Francisco', 'remote') or Enter to skip: ").strip()
+
+    min_str = input("Minimum fit score to show [default: 60]: ").strip()
+    min_score = int(min_str) if min_str.isdigit() else 60
+
+    print(f"\nSearching Adzuna for '{keywords}'"
+          + (f" in '{location}'" if location else "") + "...")
+
+    try:
+        jobs = _fetch_adzuna_jobs(keywords, location, count=25)
+    except RuntimeError as e:
+        print(f"\nERROR: {e}")
+        return
+
+    if not jobs:
+        print("No listings found. Try different keywords or broaden location.")
+        return
+
+    print(f"Found {len(jobs)} listings. Scoring against your resume...")
+    jobs = _batch_score_jobs(client, jobs)
+
+    matches = sorted(
+        [j for j in jobs if j["score"] >= min_score],
+        key=lambda x: x["score"],
+        reverse=True,
+    )
+
+    if not matches:
+        print(f"\nNo jobs scored {min_score}+. Try broader keywords or lower the threshold.")
+        return
+
+    print(f"\n{len(matches)} match(es) with score >= {min_score}, best first:\n")
+    print("=" * 70)
+    for i, job in enumerate(matches, 1):
+        print(f"\n  {i}.  [{job['score']}/100]  {job['title']}")
+        print(f"       Company  : {job['company']}")
+        print(f"       Location : {job['location']}")
+        print(f"       Salary   : {_fmt_salary(job)}")
+        print(f"       URL      : {job['url']}")
+    print("\n" + "=" * 70)
+
+    # Let the user drill into any result
+    print("\nEnter a job number to score / draft / tailor it, or press Enter to go back:")
+    pick = input("Job #: ").strip()
+    if not pick.isdigit():
+        return
+
+    idx = int(pick) - 1
+    if not (0 <= idx < len(matches)):
+        print("Invalid number.")
+        return
+
+    job = matches[idx]
+    print(f"\nFetching full description for: {job['title']} at {job['company']}...")
+    try:
+        full_jd = fetch_url(job["url"])
+    except RuntimeError:
+        full_jd = job["description"]   # fall back to Adzuna snippet
+
+    print("\nWhat would you like to do with this job?")
+    print("  1  Deep score + gap analysis")
+    print("  2  Draft cover letter")
+    print("  3  Tailor resume")
+    print("  4  All three")
+    action = input("\nChoice: ").strip()
+    if action in ("1", "4"):
+        score_job(client, full_jd)
+    if action in ("2", "4"):
+        draft_cover_letter(client, full_jd)
+    if action in ("3", "4"):
+        tailor_resume(client, full_jd)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _print_cache_stats(usage) -> None:
@@ -505,6 +705,7 @@ def main() -> None:
         print("  2  Draft a cover letter")
         print("  3  Tailor my resume to this job")
         print("  4  Score + draft + tailor  (do everything)")
+        print("  5  Find matching jobs  (search + auto-score)")
         print("  q  Quit")
 
         choice = input("\nChoice: ").strip().lower()
@@ -515,7 +716,7 @@ def main() -> None:
         elif choice in ("1", "2", "3", "4"):
             jd = get_job_description()
             if not jd:
-                print("Nothing entered — try again.")
+                print("Nothing entered -- try again.")
                 continue
             if choice in ("1", "4"):
                 score_job(client, jd)
@@ -523,8 +724,10 @@ def main() -> None:
                 draft_cover_letter(client, jd)
             if choice in ("3", "4"):
                 tailor_resume(client, jd)
+        elif choice == "5":
+            search_jobs(client)
         else:
-            print("Invalid choice — enter 1, 2, 3, 4, or q.")
+            print("Invalid choice -- enter 1, 2, 3, 4, 5, or q.")
 
 
 if __name__ == "__main__":
