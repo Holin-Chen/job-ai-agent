@@ -601,7 +601,14 @@ def search_jobs(client: anthropic.Anthropic) -> None:
         print("No keywords entered.")
         return
 
-    location = input("Location (e.g. 'San Francisco') or Enter for remote/all: ").strip()
+    location = input("Location (e.g. 'San Francisco', 'California') or Enter for all: ").strip()
+
+    # Adzuna only accepts geographic locations — "remote" is a keyword, not a place
+    REMOTE_WORDS = {"remote", "wfh", "work from home", "work-from-home", "anywhere"}
+    if location.lower() in REMOTE_WORDS:
+        keywords = keywords + " remote"
+        location = ""
+        print("(Tip: 'remote' added to keywords — Adzuna uses city/state for location)")
 
     min_str = input("Minimum fit score to show [default: 60]: ").strip()
     min_score = int(min_str) if min_str.isdigit() else 60
