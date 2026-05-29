@@ -477,10 +477,19 @@ def _fetch_adzuna_jobs(keywords: str, location: str, count: int) -> list[dict]:
 
     jobs = []
     for r in data.get("results", []):
+        # area = ['US', 'State', 'County', 'City'] — build "City, State"
+        area = r.get("location", {}).get("area", [])
+        if len(area) >= 2:
+            city  = area[-1] if len(area) >= 4 else ""
+            state = area[1]
+            location_str = f"{city}, {state}" if city else state
+        else:
+            location_str = r.get("location", {}).get("display_name", "Unknown")
+
         jobs.append({
             "title":       r.get("title", "Unknown Title"),
             "company":     r.get("company",  {}).get("display_name", "Unknown"),
-            "location":    r.get("location", {}).get("display_name", "Unknown"),
+            "location":    location_str,
             "salary_min":  int(r.get("salary_min") or 0),
             "salary_max":  int(r.get("salary_max") or 0),
             "url":         r.get("redirect_url", ""),
